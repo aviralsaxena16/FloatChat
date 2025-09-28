@@ -1,0 +1,16 @@
+streamlit
+pandas
+xarray
+netcdf4
+h5netcdf
+sqlalchemy
+psycopg2-binary
+geopandas
+langchain
+langchain-community
+langchain-google-genai
+python-dotenv
+plotly
+folium
+streamlit-folium
+chromadb
