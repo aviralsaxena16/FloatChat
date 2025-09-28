@@ -3,6 +3,7 @@ from langchain_community.agent_toolkits import create_sql_agent
 from langchain_community.utilities.sql_database import SQLDatabase
 # from langchain_openai import ChatOpenAI # Or from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_google_genai import ChatGoogleGenerativeAI
+import os
 # Use st.cache_resource to initialize the agent once
 @st.cache_resource
 def create_agent(_db_engine):
@@ -12,9 +13,11 @@ def create_agent(_db_engine):
     db = SQLDatabase(_db_engine, include_tables=['argo_measurements'])
     
     # Initialize your LLM. Make sure your API key is set in the environment.
-    # llm = ChatOpenAI(model="gpt-4o", temperature=0)
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro-latest", temperature=0)
-
+    llm = ChatGoogleGenerativeAI(
+    model="gemini-2.5-pro", 
+    google_api_key=os.getenv("GOOGLE_API_KEY"),
+    temperature=0
+)
     # Create the SQL Agent
     agent_executor = create_sql_agent(llm, db=db, agent_type="openai-tools", verbose=True)
     
