@@ -28,10 +28,30 @@ from src.tools import (
     plot_sst_from_db,
 )
 
+from urllib.parse import quote_plus
+from sqlalchemy import create_engine
+
+# Load environment variables from .env at project root
+env_path = Path(__file__).parent / '.env'
+load_dotenv(dotenv_path=env_path)
+
+# Retrieve environment variables safely
+DB_USER = os.getenv("DB_USER")
+DB_PASS = os.getenv("DB_PASS")
+DB_HOST = os.getenv("DB_HOST")
+DB_PORT = os.getenv("DB_PORT")
+DB_NAME = os.getenv("DB_NAME")
+
+# Encode DB password for URL
+encoded_pass = quote_plus(DB_PASS)
+
+DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{encoded_pass}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+engine = create_engine(DATABASE_URL)
+
 # Page config
 st.set_page_config(
-    page_title="FloatChat AI", 
-    page_icon="🌊", 
+    page_title="FloatChat AI",
+    page_icon="🌊",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -70,6 +90,52 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Initialize session state variables
+
+# --- new nc file converter ---
+import xarray as xr
+import tempfile
+
+# --- Initialize session state for toggle ---
+if "nc_uploader_active" not in st.session_state:
+    st.session_state.nc_uploader_active = False
+
+# --- Floating-style button (toggle) ---
+if st.button("📂 Upload .nc file"):
+    st.session_state.nc_uploader_active = not st.session_state.nc_uploader_active
+
+# --- Show uploader only when toggle is active ---
+if st.session_state.nc_uploader_active:
+    uploaded_file = st.file_uploader("Select a .nc file", type=["nc"])
+    if uploaded_file is not None:
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".nc") as tmp_file:
+                tmp_file.write(uploaded_file.read())
+                tmp_file_path = tmp_file.name
+
+            ds = xr.open_dataset(tmp_file_path)
+            df = ds.to_dataframe().reset_index()
+
+            csv_path = tmp_file_path.replace(".nc", ".csv")
+            df.to_csv(csv_path, index=False)
+
+            st.success(f"✅ Converted {uploaded_file.name} to CSV")
+            st.dataframe(df.head(100))  # show first 100 rows
+
+            with open(csv_path, "rb") as f:
+                st.download_button(
+                    label="📥 Download CSV",
+                    data=f,
+                    file_name=os.path.basename(csv_path),
+                    mime="text/csv"
+                )
+
+            os.remove(tmp_file_path)
+
+        except Exception as e:
+            st.error(f"❌ Failed to convert file: {e}")
+
+# --- Initialize Session State for Shared Context ---
+
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "map_bounds" not in st.session_state:
@@ -81,7 +147,6 @@ if "db" not in st.session_state:
 
 @st.cache_resource
 def initialize_agent(_db_engine, _table_name):
-    env_path = Path(__file__).parent / '.env'
     load_dotenv(dotenv_path=env_path)
     db = SQLDatabase(_db_engine, include_tables=[_table_name], view_support=True)
     llm = ChatGroq(
@@ -91,11 +156,9 @@ def initialize_agent(_db_engine, _table_name):
     )
     sql_toolkit = SQLDatabaseToolkit(db=db, llm=llm)
 
-    # Prefer DB-backed plotting tools so the agent doesn't have to juggle raw data across tools
     custom_tools = [
         plot_profiles_from_db,
         plot_sst_from_db,
-        # Also make pure plotting tools available if the agent already has data
         plot_profiles,
         plot_sea_surface_temperature_timeseries,
     ]
@@ -136,8 +199,8 @@ Keep responses short; plots will carry the detail.
     ])
     agent = create_openai_tools_agent(llm, tools, prompt)
     return AgentExecutor(
-        agent=agent, 
-        tools=tools, 
+        agent=agent,
+        tools=tools,
         verbose=False,
         handle_parsing_errors=True,
         max_iterations=10,
@@ -161,7 +224,7 @@ with st.sidebar:
     predefined_regions = [
         "Bay of Bengal", "Arabian Sea", "Indian Ocean", "Equatorial Indian"
     ]
-    
+
     selected_region = st.selectbox(
         "Select a predefined region:",
         ["None"] + predefined_regions,
@@ -173,8 +236,8 @@ with st.sidebar:
             st.session_state.selected_region = selected_region
             query = f"What is the average temperature and salinity in {selected_region}? Also show me the profiles."
             st.session_state.messages.append({"role": "user", "content": query})
-            st.rerun()
-    
+            st.experimental_rerun()
+
     # Statistics
     st.subheader("📊 Quick Stats")
     if st.button("Get Database Overview"):
@@ -197,22 +260,22 @@ with st.sidebar:
         "Create a T-S diagram for Equatorial Indian region",
         "Plot sea surface temperature time series for Bay of Bengal"
     ]
-    
+
     for query in example_queries:
         if st.button(query, key=f"example_{hash(query)}"):
             st.session_state.messages.append({"role": "user", "content": query})
-            st.rerun()
-
+            st.experimental_rerun()
+    
 # --- Main Layout ---
 col1, col2 = st.columns([0.6, 0.4])
 
 # --- Map Column ---
 with col1:
     st.subheader("🗺️ Interactive Map Query")
-    
+
     # Create folium map
     m = folium.Map(location=[15, 75], zoom_start=4)
-    
+
     # Add drawing tools
     Draw(
         export=False,
@@ -225,37 +288,37 @@ with col1:
             'polyline': False
         }
     ).add_to(m)
-    
+
     # Display map
     map_data = st_folium(m, height=500, width=700)
-    
+
     # Process map selection
     if map_data and map_data.get("last_active_drawing"):
         coords = map_data["last_active_drawing"]["geometry"]["coordinates"]
-        
+
         if map_data["last_active_drawing"]["geometry"]["type"] == "Polygon":
             coords = coords[0]  # Extract coordinate array from polygon
-        
+
         # Calculate bounds
         lons = [p[0] for p in coords]
         lats = [p[1] for p in coords]
-        
+
         min_lon, max_lon = min(lons), max(lons)
         min_lat, max_lat = min(lats), max(lats)
-        
+
         # Update session state
         st.session_state.map_bounds = {
-            "min_lon": min_lon, "max_lon": max_lon, 
+            "min_lon": min_lon, "max_lon": max_lon,
             "min_lat": min_lat, "max_lat": max_lat
         }
-        
+
         # Create region bounds
         region = RegionBounds(
             min_lat=min_lat, max_lat=max_lat,
             min_lon=min_lon, max_lon=max_lon,
             region_name="Selected Map Region"
         )
-        
+
         with st.spinner("Analyzing selected region..."):
             data = st.session_state.db.get_region_data(region, limit=1000)
             if data and len(data) > 0:
@@ -273,7 +336,7 @@ with col1:
                         st.metric("Data Points", f"{stats.get('data_points', 0):,}")
             else:
                 st.warning("No ARGO data found in the selected region. Try a larger area.")
-    
+
     # Download map
     if st.button("📥 Download Map as HTML"):
         map_html = m._repr_html_()
@@ -345,7 +408,7 @@ if prompt := st.chat_input("Ask about ARGO data..."):
                 response = agent_executor.invoke({"input": context_prompt})
                 output = response.get('output', '')
 
-                # Scrub any tool/thought artifacts
+                # Clean output from internal tool call artifacts
                 import re
                 output = re.sub(r'<tool_call>.*?</tool_call>', '', output, flags=re.DOTALL)
                 output = re.sub(r'``````', '', output, flags=re.DOTALL)
@@ -354,7 +417,6 @@ if prompt := st.chat_input("Ask about ARGO data..."):
                 output = re.sub(r'Observation:.*?(?=\n\n|\Z)', '', output, flags=re.DOTALL)
                 output = re.sub(r'\n{3,}', '\n\n', output).strip()
 
-
                 if output:
                     st.markdown(output)
                     st.session_state.messages.append({"role": "assistant", "content": output})
@@ -362,12 +424,10 @@ if prompt := st.chat_input("Ask about ARGO data..."):
                     st.info("✅ Analysis complete. Check visualizations above.")
                     st.session_state.messages.append({"role": "assistant", "content": "Analysis complete."})
 
-
             except Exception as e:
                 error_message = f"❌ Error: {str(e)}"
                 st.error(error_message)
                 st.session_state.messages.append({"role": "assistant", "content": error_message})
-
 
 # --- Footer ---
 st.markdown("---")
