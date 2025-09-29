@@ -1,8 +1,7 @@
 from pydantic import BaseModel, Field, field_validator
 from pydantic_core.core_schema import ValidationInfo
-from typing import List, Optional
+from typing import List, Optional, Any
 from datetime import datetime
-
 
 class ArgoDataPoint(BaseModel):
     """Pydantic model for individual ARGO data points"""
@@ -11,7 +10,7 @@ class ArgoDataPoint(BaseModel):
     temp: Optional[float] = Field(None, description="Temperature in Celsius")
     psal: Optional[float] = Field(None, description="Salinity in PSU")
     pres: Optional[float] = Field(None, ge=0, description="Pressure in dbar")
-    timestamp: Optional[str] = Field(None, description="Timestamp of measurement")
+    timestamp: Optional[str] = Field(None, description="Timestamp of measurement (ISO string)")
     platform_number: Optional[str] = Field(None, description="Float identifier")
     cycle_number: Optional[int] = Field(None, description="Cycle number")
 
@@ -21,6 +20,23 @@ class ArgoDataPoint(BaseModel):
         if v is not None:
             return str(v)
         return v
+
+    # Coerce timestamp-like values to ISO string if possible
+    @field_validator('timestamp', mode="before")
+    def coerce_timestamp(cls, v: Any):
+        if v is None:
+            return v
+        # If already a string, keep
+        if isinstance(v, str):
+            return v
+        # If datetime, convert to ISO
+        if isinstance(v, datetime):
+            return v.isoformat()
+        # Fallback: best-effort cast to string
+        try:
+            return str(v)
+        except Exception:
+            return None
 
     # Legacy field mappings for backward compatibility
     @property

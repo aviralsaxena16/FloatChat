@@ -6,30 +6,29 @@ from pathlib import Path
 from typing import List, Dict, Any
 import json
 from sqlalchemy.sql import text
+import folium
+from streamlit_folium import st_folium
+from folium.plugins import Draw
 
-# --- LangChain Imports ---
+# LangChain imports
 from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_community.utilities.sql_database import SQLDatabase
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
 
-# --- Local Imports ---
-from src.tools import (
-    plot_profiles, plot_ts_diagram, plot_float_trajectory, 
-    plot_sea_surface_temperature_timeseries, calculate_regional_statistics,
-    calculate_statistics
-)
+# Local imports
 from src.database import ArgoDatabase
-from src.region_utils import RegionCalculator
 from src.models import RegionBounds
+# Import both core plotting tools and new DB-backed convenience tools
+from src.tools import (
+    plot_profiles,
+    plot_sea_surface_temperature_timeseries,
+    plot_profiles_from_db,
+    plot_sst_from_db,
+)
 
-# --- Map Imports ---
-import folium
-from streamlit_folium import st_folium
-from folium.plugins import Draw
-
-# --- Page Configuration ---
+# Page config
 st.set_page_config(
     page_title="FloatChat AI", 
     page_icon="🌊", 
@@ -70,7 +69,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- Initialize Session State ---
+# Initialize session state variables
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "map_bounds" not in st.session_state:
@@ -80,67 +79,61 @@ if "selected_region" not in st.session_state:
 if "db" not in st.session_state:
     st.session_state.db = ArgoDatabase()
 
-# --- Initialize Agent ---
 @st.cache_resource
-def initialize_agent(_db_engine, _table_name):  # Note: underscore prefix to avoid hashing
-    """Initialize the LangChain agent with tools"""
+def initialize_agent(_db_engine, _table_name):
     env_path = Path(__file__).parent / '.env'
     load_dotenv(dotenv_path=env_path)
-    
-    # Use passed parameters instead of session state
     db = SQLDatabase(_db_engine, include_tables=[_table_name], view_support=True)
-    
-    # Initialize LLM
     llm = ChatGroq(
         model="deepseek-r1-distill-llama-70b",
         temperature=0,
         max_retries=2,
     )
-    
-    # Create SQL toolkit
     sql_toolkit = SQLDatabaseToolkit(db=db, llm=llm)
-    
-    # Custom tools for plotting and analysis
+
+    # Prefer DB-backed plotting tools so the agent doesn't have to juggle raw data across tools
     custom_tools = [
-        plot_profiles, 
-        plot_ts_diagram, 
-        plot_float_trajectory, 
+        plot_profiles_from_db,
+        plot_sst_from_db,
+        # Also make pure plotting tools available if the agent already has data
+        plot_profiles,
         plot_sea_surface_temperature_timeseries,
-        calculate_regional_statistics,
-        calculate_statistics
     ]
-    
-    tools = sql_toolkit.get_tools() + custom_tools
-    
-    # Enhanced system prompt
+    tools = custom_tools + sql_toolkit.get_tools()
+
     prompt = ChatPromptTemplate.from_messages([
-    ("system", f"""
+        ("system", f"""
 You are FloatChat AI, an oceanographic analyst for Indian Ocean regions.
 
 DATABASE: {_table_name}
 COLUMNS: latitude, longitude, temp, psal, pres, timestamp (from juld), platform_number
 
-CRITICAL: Output ONLY final answers. NEVER show SQL, tool calls, or thinking process.
+CRITICAL RULES:
+- Output ONLY final answers and display plots directly in Streamlit. NEVER show SQL, tool calls, or internal thoughts.
+- For plotting requests, prefer DB-backed tools:
+  • For depth profiles: use tool "plot_profiles_from_db"
+  • For SST time-series: use tool "plot_sst_from_db"
+  Pass either a known region name (e.g., "Bay of Bengal") OR the exact WHERE-bounds string appended to the user prompt (see below).
 
-When user asks for plots:
-1. Fetch data with SQL using correct region bounds
-2. Convert to list of dicts with keys: latitude, longitude, temp, psal, pres, timestamp, platform_number
-3. Call the plotting tool with that data
-4. Return ONLY a 1-2 sentence summary after the plot renders
+MAP SELECTION:
+If the user has a selected region on the map, their prompt includes:
+"USER SELECTED MAP REGION: latitude BETWEEN <min_lat> AND <max_lat> AND longitude BETWEEN <min_lon> AND <max_lon>. Use these exact bounds in your WHERE clause."
+When you see this, pass that exact line (bounds) to the DB-backed plotting tool.
 
-For statistics:
-- Return ONLY the numbers with units
-
-Region bounds when mentioned:
+REGION BOUNDS (by name):
 - Arabian Sea: latitude BETWEEN 8 AND 25 AND longitude BETWEEN 50 AND 75
 - Bay of Bengal: latitude BETWEEN 8 AND 22 AND longitude BETWEEN 80 AND 95
 - Equatorial Indian: latitude BETWEEN -5 AND 5 AND longitude BETWEEN 50 AND 100
 - Indian Ocean: latitude BETWEEN -40 AND 25 AND longitude BETWEEN 20 AND 120
+
+STATISTICS:
+- When asked for statistics only, respond with numbers and units (no SQL/tool details).
+
+Keep responses short; plots will carry the detail.
 """),
-    ("user", "{input}"),
-    ("placeholder", "{agent_scratchpad}"),
-])
-    
+        ("user", "{input}"),
+        ("placeholder", "{agent_scratchpad}"),
+    ])
     agent = create_openai_tools_agent(llm, tools, prompt)
     return AgentExecutor(
         agent=agent, 
@@ -148,14 +141,14 @@ Region bounds when mentioned:
         verbose=False,
         handle_parsing_errors=True,
         max_iterations=10,
-        return_intermediate_steps=False  # Hide intermediate steps
+        return_intermediate_steps=False
     )
 
-# --- Header ---
+# Header
 st.markdown("""
 <div class="main-header">
     <h1>🌊 FloatChat AI: Conversational Ocean Data Explorer</h1>
-    <p>Explore ARGO oceanographic data through intelligent queries and beautiful visualizations</p>
+    <p>Explore ARGO oceanographic data through intelligent queries and visualizations</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -263,15 +256,11 @@ with col1:
             region_name="Selected Map Region"
         )
         
-        # 🔥 Analysis is now inside the block
         with st.spinner("Analyzing selected region..."):
             data = st.session_state.db.get_region_data(region, limit=1000)
-            
             if data and len(data) > 0:
                 stats = st.session_state.db.get_regional_averages(region)
-                
                 st.success(f"Found {len(data)} data points in selected region")
-                
                 if stats and stats.get('data_points', 0) > 0:
                     col_a, col_b, col_c = st.columns(3)
                     with col_a:
@@ -298,8 +287,7 @@ with col1:
 # --- Chat Column ---
 with col2:
     st.subheader("💬 Chat Interface")
-    
-    # Show current context
+
     if st.session_state.map_bounds:
         b = st.session_state.map_bounds
         st.markdown(f"""
@@ -309,12 +297,11 @@ with col2:
         Lon: {b['min_lon']:.2f} to {b['max_lon']:.2f}
         </div>
         """, unsafe_allow_html=True)
-        
+
         if st.button("Clear Map Selection"):
             st.session_state.map_bounds = None
-            st.rerun()
-    
-    # Initialize agent with database parameters
+            st.experimental_rerun()
+
     try:
         agent_executor = initialize_agent(
             st.session_state.db.engine,
@@ -323,8 +310,7 @@ with col2:
     except Exception as e:
         st.error(f"Failed to initialize agent: {e}")
         st.stop()
-    
-    # Chat messages
+
     chat_container = st.container()
     with chat_container:
         for message in st.session_state.messages:
@@ -334,61 +320,54 @@ with col2:
                     st.dataframe(content, use_container_width=True)
                 else:
                     st.markdown(content)
-    
-    # Chat input
+
 if prompt := st.chat_input("Ask about ARGO data..."):
-    # Add user message
     st.session_state.messages.append({"role": "user", "content": prompt})
-    
-    # Show user message
     with st.chat_message("user"):
         st.markdown(prompt)
-    
-    # Generate response
     with st.chat_message("assistant"):
         with st.spinner("🤔 Analyzing oceanographic data..."):
             try:
-                # Prepare context
                 context_prompt = prompt
-                
-                # Add map context if available
                 region_keywords = ["bay of bengal", "arabian sea", "indian ocean", "equatorial indian"]
                 has_specific_region = any(keyword in prompt.lower() for keyword in region_keywords)
-                
+
+                # Append map bounds in a format the agent is instructed to pass through to the DB-backed tools
                 if st.session_state.map_bounds and not has_specific_region:
                     b = st.session_state.map_bounds
-                    context_addition = f"\n\nUSER SELECTED MAP REGION: latitude BETWEEN {b['min_lat']} AND {b['max_lat']} AND longitude BETWEEN {b['min_lon']} AND {b['max_lon']}. Use these exact bounds in your WHERE clause."
+                    context_addition = (
+                        f"\n\nUSER SELECTED MAP REGION: latitude BETWEEN {b['min_lat']} AND {b['max_lat']} "
+                        f"AND longitude BETWEEN {b['min_lon']} AND {b['max_lon']}. "
+                        f"Use these exact bounds in your WHERE clause."
+                    )
                     context_prompt += context_addition
-                
-                # Execute agent
+
                 response = agent_executor.invoke({"input": context_prompt})
-                
-                # Extract clean output
                 output = response.get('output', '')
-                
-                # Remove any leaked tool calls/SQL from output
+
+                # Scrub any tool/thought artifacts
                 import re
                 output = re.sub(r'<tool_call>.*?</tool_call>', '', output, flags=re.DOTALL)
-                output = re.sub(r'```sql.*?```', '', output, flags=re.DOTALL)
+                output = re.sub(r'``````', '', output, flags=re.DOTALL)
                 output = re.sub(r'Action:.*?(?=\n\n|\Z)', '', output, flags=re.DOTALL)
                 output = re.sub(r'Thought:.*?(?=\n\n|\Z)', '', output, flags=re.DOTALL)
                 output = re.sub(r'Observation:.*?(?=\n\n|\Z)', '', output, flags=re.DOTALL)
-                
-                # Clean up extra whitespace
                 output = re.sub(r'\n{3,}', '\n\n', output).strip()
-                
-                # Display only if there's content
+
+
                 if output:
                     st.markdown(output)
                     st.session_state.messages.append({"role": "assistant", "content": output})
                 else:
                     st.info("✅ Analysis complete. Check visualizations above.")
                     st.session_state.messages.append({"role": "assistant", "content": "Analysis complete."})
-                
+
+
             except Exception as e:
                 error_message = f"❌ Error: {str(e)}"
                 st.error(error_message)
                 st.session_state.messages.append({"role": "assistant", "content": error_message})
+
 
 # --- Footer ---
 st.markdown("---")
