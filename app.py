@@ -23,6 +23,52 @@ st.set_page_config(
     layout="wide"
 )
 
+# --- new nc file converter ---
+import xarray as xr
+import tempfile
+
+# --- Initialize session state for toggle ---
+if "nc_uploader_active" not in st.session_state:
+    st.session_state.nc_uploader_active = False
+
+# --- Floating-style button (toggle) ---
+# You can adjust styling with CSS if you like
+if st.button("📂 Upload .nc file"):
+    st.session_state.nc_uploader_active = not st.session_state.nc_uploader_active
+
+# --- Show uploader only when toggle is active ---
+if st.session_state.nc_uploader_active:
+    uploaded_file = st.file_uploader("Select a .nc file", type=["nc"])
+    if uploaded_file is not None:
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".nc") as tmp_file:
+                tmp_file.write(uploaded_file.read())
+                tmp_file_path = tmp_file.name
+
+            ds = xr.open_dataset(tmp_file_path)
+            df = ds.to_dataframe().reset_index()
+
+            csv_path = tmp_file_path.replace(".nc", ".csv")
+            df.to_csv(csv_path, index=False)
+
+            st.success(f"✅ Converted {uploaded_file.name} to CSV")
+            st.dataframe(df.head(100))  # show first 100 rows
+
+            with open(csv_path, "rb") as f:
+                st.download_button(
+                    label="📥 Download CSV",
+                    data=f,
+                    file_name=os.path.basename(csv_path),
+                    mime="text/csv"
+                )
+
+            os.remove(tmp_file_path)
+
+        except Exception as e:
+            st.error(f"❌ Failed to convert file: {e}")
+
+
+
 # --- Initialize Session State for Shared Context ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -47,7 +93,7 @@ def get_db_engine():
         st.stop()
     
     encoded_pass = quote_plus(DB_PASS)
-    DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{encoded_pass}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+    DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
     engine = create_engine(DATABASE_URL)
     return engine
 
@@ -62,7 +108,8 @@ def initialize_agent(_db_engine):
     temperature=0,
     max_tokens=None,
     timeout=None,
-    max_retries=2
+    max_retries=2,
+    api_key = os.getenv("GROQ_API_KEY")
 )
     
     agent_executor = create_sql_agent(llm, db=db, agent_type="openai-tools", verbose=True)

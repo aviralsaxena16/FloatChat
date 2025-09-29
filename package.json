@@ -1,0 +1,20 @@
+{
+  "name": "floatchat",
+  "version": "1.0.0",
+  "description": "**An AI-powered conversational platform to explore and visualize complex ARGO oceanographic data using natural language and interactive maps.**",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aviralsaxena16/FloatChat.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/aviralsaxena16/FloatChat/issues"
+  },
+  "homepage": "https://github.com/aviralsaxena16/FloatChat#readme"
+}
