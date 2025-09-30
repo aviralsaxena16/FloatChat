@@ -14,3 +14,7 @@ plotly
 folium
 streamlit-folium
 chromadb
+apscheduler  
+netCDF4 
+beautifulsoup4 
+requests
