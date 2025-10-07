@@ -13,7 +13,7 @@ Oceanographic data, particularly from the ARGO float program, is **vast, complex
 
 <br><br>
 ### 2️⃣ Conversational AI answering general queries
-<img width="70%" alt="General queries" src="https://github.com/user-attachments/assets/33845436-7eb3-447d-9be1-7b5b353a6cee" />
+<img  width="70%"  alt="Screenshot 2025-10-07 163317" src="https://github.com/user-attachments/assets/98d2e93c-39ba-4ab5-acbd-e9ef308a5f23" />
 
 
 <br><br>
