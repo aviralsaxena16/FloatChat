@@ -16,9 +16,6 @@ Oceanographic data, particularly from the ARGO float program, is **vast, complex
 <img  width="70%"  alt="Screenshot 2025-10-07 163317" src="https://github.com/user-attachments/assets/98d2e93c-39ba-4ab5-acbd-e9ef308a5f23" />
 
 
-<br><br>
-### 3️⃣ Plotting temperature and salinity profiles for the selected region
-<img width="70%" alt="Profile plotting" src="https://github.com/user-attachments/assets/5012ed5d-cfd0-4da1-94cc-269d8004ab49" />
 
 ---
 
